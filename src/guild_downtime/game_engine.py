@@ -1,37 +1,22 @@
-# ============================================================
-# NOTE DI INTEGRAZIONE NEL PROGETTO
-#
-# - Questo file è pensato per essere collocato in: src/guild_downtime/game_engine.py
-# - I salvataggi vengono scritti in: <radice_progetto>/data/saves/
-# - Per questa gilda il file di default è: data/saves/Cacciatori_di_Taglie.json
-# - Per usare un altro file/gilda all'interno del progetto:
-#       from guild_downtime.game_engine import ResourceBank, DATA_DIR
-#       bank = ResourceBank(DATA_DIR / "Nome_Altra_Gilda.json")
-# - Oppure, per un percorso completamente personalizzato:
-#       from pathlib import Path
-#       bank = ResourceBank(Path("percorso/personalizzato.json"))
-# - È consigliabile creare uno script di avvio in scripts/, ad esempio:
-#       scripts/run_bounty_guild.py -> istanzia GameEngine() e chiama menu().
-# - Se vuoi separare configurazioni iniziali e salvataggi:
-#       * configs/ contiene i template iniziali delle gilde.
-#       * data/saves/ contiene solo gli stati di gioco salvati.
-# ============================================================
-
 import difflib
 import json
+import math
 import os
 import random
 import time
 from pathlib import Path
 
-# Percorsi base per i salvataggi (radice del repo = ../../ rispetto a questo file)
+# ============================================================
+# Percorsi "GitHub-friendly"
+# - Questo file è pensato in: src/guild_downtime/game_engine.py
+# - I salvataggi stanno in: <root>/data/saves/Cacciatori_di_Taglie.json
+#   (se vuoi usare un altro nome, cambia solo la riga SAVE_FILE)
+# ============================================================
+
 BASE_DIR = Path(__file__).resolve().parents[2]
-DATA_DIR = BASE_DIR / "data" / "saves"
-DATA_DIR.mkdir(parents=True, exist_ok=True)
-
-# File di salvataggio di default per questa gilda (Cacciatori di Taglie)
-DEFAULT_SAVE_FILE = DATA_DIR / "Cacciatori_di_Taglie.json"
-
+SAVE_DIR = BASE_DIR / "data" / "saves"
+SAVE_DIR.mkdir(parents=True, exist_ok=True)
+SAVE_FILE = SAVE_DIR / "Cacciatori_di_Taglie.json"
 
 # ==========================================
 # DATABASE REGOLE (Fonte: Golarion Insider)
@@ -46,93 +31,22 @@ EARN_COSTS = {
     "MO": 0,  # Generare monete è gratis
 }
 
-# Costi per ACQUISTARE 1 punto di risorsa
-BUY_COSTS = {
-    "Merci": 20,
-    "Manodopera": 20,
-    "Influenza": 30,
-    "Magia": 100,
-    "MO": 1,  # 1 MO = 1 MO, solo per completezza
-}
-
-# Target DC per i Tiri di Controllo Esecutivo (Giorno di Gestione)
-CONTROL_DC_TABLE = {
-    "Facile": 10,
-    "Medio": 15,
-    "Difficile": 20,
-    "Molto Difficile": 25,
-    "Estremo": 30,
-}
-
-# Target DC per i Tiri di Evento (Eventi Casuali)
-EVENT_DC_TABLE = {
-    "Minore": 10,
-    "Moderato": 15,
-    "Grave": 20,
-    "Disastroso": 25,
-}
-
-# Lista degli EVENTI CASUALI possibili (semplificati e adattati)
-RANDOM_EVENTS = [
-    {
-        "name": "Donazione Inaspettata",
-        "description": "Un ricco benefattore dona fondi alla gilda.",
-        "resource": "MO",
-        "amount": 50,
-    },
-    {
-        "name": "Richiesta di Aiuto",
-        "description": "Una comunità in pericolo chiede l'aiuto della gilda. "
-        "Se accettata, aumenta l'Influenza.",
-        "resource": "Influenza",
-        "amount": 2,
-    },
-    {
-        "name": "Incidente sul Lavoro",
-        "description": "Un incidente causa costi imprevisti in Magia o Manodopera.",
-        "resource": "Manodopera",
-        "amount": -2,
-    },
-    {
-        "name": "Scandalo",
-        "description": "Un membro della gilda è coinvolto in uno scandalo pubblico.",
-        "resource": "Influenza",
-        "amount": -3,
-    },
-    {
-        "name": "Affari Fiorenti",
-        "description": "Un periodo di intensa attività porta profitti extra.",
-        "resource": "MO",
-        "amount": 30,
-    },
-]
-
-# Effetti ricorrenti di Gilda
-GUILD_EFFECTS = {
-    "Bonus Reclutamento": {
-        "description": "La gilda ha una rete di contatti che facilita il reclutamento.",
-        "influenza_bonus": 2,
-    },
-    "Reputazione Temeraria": {
-        "description": "La gilda è famosa per prendere missioni troppo rischiose.",
-        "event_chance_bonus": 10,
-    },
-}
-
-# Tipologie di Squadre e Stanze con i relativi costi di costruzione (semplificato)
-SQUAD_ROOMS_COSTS = {
+GAME_DATABASE = {
     # --- SQUADRE ---
-    "Agente": {"MO": 2, "Influenza": 2},
-    "Artigiani": {"MO": 2, "Manodopera": 2, "Merci": 2},
-    "Guardia del Corpo": {"MO": 4, "Influenza": 4, "Manodopera": 4},
-    "Informatori": {"MO": 1, "Influenza": 1},
-    "Mercenari": {"MO": 3, "Influenza": 3, "Manodopera": 3},
-    "Spie": {"MO": 2, "Influenza": 2},
+    "Accolito": {"MO": 4, "Influenza": 4, "Magia": 4},
+    "Apprendista": {"MO": 4, "Influenza": 4, "Magia": 4},
+    "Arcieri": {"MO": 6, "Influenza": 6, "Manodopera": 6},
+    "Arcieri a Cavallo": {"MO": 8, "Influenza": 8, "Manodopera": 8},
+    "Arcieri Scelti": {"MO": 7, "Influenza": 7, "Manodopera": 7},
+    "Artigiani": {"MO": 4, "Manodopera": 4, "Merci": 4},
+    "Burocrati": {"MO": 4, "Influenza": 4},
     "Cavalleria": {"MO": 7, "Influenza": 7, "Manodopera": 7},
-    "Criminali": {"MO": 1, "Influenza": 1, "Merci": 1},
-    "Cultisti": {"MO": 2, "Influenza": 2, "Magia": 2},
-    "Guaritori": {"MO": 3, "Magia": 3, "Manodopera": 3},
-    "Mendicanti": {"MO": 1, "Influenza": 1},
+    "Guardie": {"MO": 2, "Influenza": 2, "Manodopera": 2},
+    "Guardie Scelte": {"MO": 4, "Influenza": 4, "Manodopera": 4},
+    "Guidatori": {"MO": 2, "Manodopera": 2, "Merci": 2},
+    "Lacchè": {"Influenza": 2, "Manodopera": 2},
+    "Lavoranti": {"MO": 2, "Manodopera": 2},
+    "Malioso": {"MO": 7, "Influenza": 7, "Magia": 7},
     "Marinai": {"MO": 2, "Manodopera": 2, "Merci": 2},
     "Rapinatori": {"MO": 4, "Influenza": 4, "Merci": 4},
     "Sacerdote": {"MO": 7, "Influenza": 7, "Magia": 7},
@@ -147,59 +61,92 @@ SQUAD_ROOMS_COSTS = {
     "Arena da Combattimento": {"MO": 15, "Influenza": 15},
     "Auditorium": {"MO": 15, "Influenza": 15},
     "Aula": {"MO": 8, "Influenza": 8, "Magia": 8, "Manodopera": 8, "Merci": 8},
-    "Bottega": {"MO": 10, "Merci": 10, "Manodopera": 10},
-    "Caserma": {"MO": 10, "Manodopera": 10},
-    "Cella": {"MO": 4, "Manodopera": 4},
-    "Cimitero": {"MO": 10, "Manodopera": 10},
-    "Cucina": {"MO": 6, "Manodopera": 6, "Merci": 6},
-    "Dispensa": {"MO": 5, "Merci": 5},
-    "Dormitorio": {"MO": 8, "Manodopera": 8},
-    "Infermeria": {"MO": 12, "Magia": 12},
-    "Laboratorio": {"MO": 12, "Magia": 12, "Merci": 12},
-    "Magazzino": {"MO": 6, "Merci": 6},
-    "Palestra": {"MO": 8, "Manodopera": 8},
-    "Sala Comune": {"MO": 8, "Influenza": 8},
-    "Sala del Consiglio": {"MO": 18, "Influenza": 18, "Magia": 18},
-    "Santuario": {"MO": 15, "Influenza": 15, "Magia": 15},
-    "Stalla": {"MO": 10, "Manodopera": 10},
-    "Studio": {"MO": 8, "Influenza": 8, "Magia": 8},
+    "Bagno": {"MO": 3, "Influenza": 3},
+    "Banchina": {"MO": 12, "Influenza": 12, "Manodopera": 12, "Merci": 12},
+    "Bar": {"MO": 10, "Influenza": 10},
+    "Biblioteca": {"MO": 8, "Influenza": 8},
+    "Biblioteca Magica": {"MO": 12, "Influenza": 12, "Magia": 12},
+    "Birrificio": {"MO": 10, "Influenza": 10},
+    "Camera da Letto": {"MO": 3, "Influenza": 3},
+    "Campo Sportivo": {"MO": 10, "Influenza": 10},
+    "Casello": {"MO": 4, "Merci": 4},
+    "Cortile": {"MO": 5, "Influenza": 5, "Magia": 5, "Manodopera": 5, "Merci": 5},
+    "Cripta": {"MO": 5, "Influenza": 5, "Magia": 5},
+    "Cucina": {"MO": 4, "Merci": 4},
+    "Deposito": {"MO": 2},
+    "Dojo": {"MO": 8, "Influenza": 8, "Manodopera": 8},
+    "Dormitori": {"MO": 8, "Manodopera": 8},
+    "Falsa Facciata": {"MO": 2, "Merci": 2},
+    "Forgia": {"MO": 10, "Merci": 10},
+    "Fossa": {"MO": 1, "Manodopera": 1},
+    "Giardino": {"MO": 8, "Merci": 8},
+    "Guardiola": {"MO": 4, "Merci": 4},
+    "Habitat": {"MO": 12, "Influenza": 12},
+    "Infermeria": {"MO": 8, "Influenza": 8},
+    "Labirinto": {"MO": 5, "Influenza": 5},
+    "Laboratorio Alchemico": {"MO": 10, "Magia": 10, "Merci": 10},
+    "Laboratorio Artigiano": {"MO": 10, "Influenza": 10, "Merci": 10},
+    "Laboratorio di Conceria": {"MO": 10, "Merci": 10},
+    "Lavanderia": {"MO": 3, "Merci": 3},
+    "Officina Meccanica": {"MO": 10, "Manodopera": 10, "Merci": 10},
+    "Postazione di Lavoro": {"MO": 8, "Influenza": 8, "Merci": 8},
+    "Posto di Guardia": {"MO": 4, "Merci": 4},
+    "Recinto per Animali": {"MO": 8, "Manodopera": 8, "Merci": 8},
+    "Reliquiario": {"MO": 5, "Influenza": 5},
+    "Sala Cerimoniale": {
+        "MO": 10,
+        "Influenza": 10,
+        "Magia": 10,
+        "Manodopera": 10,
+        "Merci": 10,
+    },
+    "Sala Comune": {"MO": 7, "Influenza": 7},
+    "Sala da Ballo": {"MO": 10, "Influenza": 10},
+    "Sala da Gioco": {"MO": 10},
+    "Sala dei Trofei": {"MO": 5, "Influenza": 5},
+    "Sala del Trono": {"Influenza": 15},
+    "Sala della Mola": {"MO": 8, "Merci": 8},
+    "Sala delle Evocazioni": {"Magia": 3},
+    "Salotto": {"Influenza": 4},
+    "Sauna": {"MO": 3, "Influenza": 3},
+    "Scriptorium": {"MO": 5, "Influenza": 5, "Magia": 5, "Manodopera": 5, "Merci": 5},
+    "Serra": {"MO": 12, "Influenza": 12, "Merci": 12},
+    "Specola": {"MO": 5, "Influenza": 5, "Magia": 5},
+    "Stallaggio": {"MO": 8, "Manodopera": 8, "Merci": 8},
+    "Stamperia": {"MO": 8, "Influenza": 8, "Manodopera": 8, "Merci": 8},
+    "Stanza da Cucito": {"MO": 10, "Influenza": 10, "Merci": 10},
+    "Stanza della Cova": {"MO": 5, "Merci": 5},
+    "Stanza dello Scrutamento": {"MO": 2, "Influenza": 2},
+    "Statua": {"MO": 1, "Influenza": 1},
+    "Terreno Agricolo": {"MO": 10, "Merci": 10},
+    "Terreno Sepolcrale": {"MO": 4, "Influenza": 4},
+    "Trasgressori": {"MO": 2, "Influenza": 2, "Merci": 2},
+    "Vetrina": {"MO": 5, "Influenza": 5, "Manodopera": 5, "Merci": 5},
 }
 
-# Configurazione di Default della Gilda di Cacciatori di Taglie
 DEFAULT_GUILD_CONFIG = {
-    "name": "Gilda dei Cacciatori di Taglie",
-    "description": "Una gilda specializzata nella cattura di criminali ricercati, "
-    "mostri pericolosi e bersagli ad alto rischio.",
-    "starting_resources": {
-        "MO": 100.0,
-        "Merci": 5,
-        "Influenza": 3,
-        "Magia": 0,
-        "Manodopera": 4,
-    },
-    "starting_units": [
+    "name": "Compagnia Mercenaria del Grifone",
+    "rooms": [
+        {"name": "Armeria", "type": "Stanza", "bonuses": {"Manodopera": 2}, "qty": 1},
+        {"name": "Camerata", "type": "Stanza", "bonuses": {"Manodopera": 2}, "qty": 1},
+    ],
+    "teams": [
         {
-            "name": "Mercenari",
+            "name": "Arcieri Scelti",
             "type": "Squadra",
-            "bonuses": {"MO": 3, "Influenza": 3, "Manodopera": 3},
+            "bonuses": {"MO": 7, "Influenza": 7, "Manodopera": 7},
             "qty": 1,
         },
         {
-            "name": "Informatori",
+            "name": "Soldati Scelti",
             "type": "Squadra",
-            "bonuses": {"Influenza": 2},
+            "bonuses": {"MO": 6, "Influenza": 6, "Manodopera": 6},
             "qty": 1,
         },
         {
-            "name": "Guardia del Corpo",
+            "name": "Sacerdote",
             "type": "Squadra",
-            "bonuses": {"MO": 4, "Influenza": 4, "Manodopera": 4},
-            "qty": 1,
-        },
-        {
-            "name": "Alloggi",
-            "type": "Stanza",
-            "bonuses": {"MO": 0},
+            "bonuses": {"MO": 7, "Magia": 7, "Influenza": 7},
             "qty": 1,
         },
     ],
@@ -216,120 +163,143 @@ class DiceRoller:
         roll = random.randint(1, sides)
         total = roll + bonus
         sign = "+" if bonus >= 0 else ""
+        log_str = f"d{sides}: [{roll}] {sign}{bonus} = {total}"
+
         if not silent:
-            print(
-                f"\n[TIRO] {reason}: 1d{sides}{sign}{bonus} = {roll} {sign} {bonus} = {total}"
-            )
-        return total, roll
+            if "generico" not in reason:
+                print(f"\n🎲 {reason}")
+            print(f"   > {log_str}")
+            time.sleep(0.1)
+
+        return total, roll, log_str
 
     @staticmethod
-    def roll_dice_pool(num_dice, sides, bonus_per_die=0, reason="Pool di dadi"):
-        rolls = [random.randint(1, sides) for _ in range(num_dice)]
-        total = sum(rolls) + num_dice * bonus_per_die
-        sign = "+" if bonus_per_die >= 0 else ""
-        print(
-            f"\n[POOL] {reason}: {num_dice}d{sides}{sign}{bonus_per_die} "
-            f"= {rolls} {sign} {num_dice * bonus_per_die} -> Totale: {total}"
+    def skill_check(
+        skill_options, dc, bank_ref, silent=False, extra_bonus=0, return_log_only=False
+    ):
+        if isinstance(skill_options, str):
+            skill_options = [skill_options]
+
+        best_skill = skill_options[0]
+        best_mod = -99
+
+        if not silent and not return_log_only:
+            print(f"\n⚠️  RICHIESTA PROVA: {', '.join(skill_options)} (CD {dc})")
+
+        for skill in skill_options:
+            key = skill
+            val = bank_ref.character_stats.get(key, 0)
+            if val > best_mod:
+                best_mod = val
+                best_skill = key
+
+        final_mod = best_mod + extra_bonus
+        mod_str = f"+{final_mod}" if final_mod >= 0 else f"{final_mod}"
+
+        if not silent and not return_log_only:
+            extra_txt = f" (Bonus Extra +{extra_bonus})" if extra_bonus else ""
+            print(f"   💡 Skill: {best_skill} ({mod_str}){extra_txt}")
+
+        roll = random.randint(1, 20)
+        total = roll + final_mod
+
+        is_success = False
+        result_desc = "FALLITO"
+
+        if roll == 20:
+            is_success = True
+            result_desc = "CRITICO (Nat 20)"
+        elif total >= dc:
+            is_success = True
+            result_desc = "SUPERATO"
+        else:
+            is_success = False
+            result_desc = "FALLITO"
+
+        log_check_str = (
+            f"{best_skill} d20[{roll}]{mod_str} = {total} vs CD {dc} ({result_desc})"
         )
-        return total, rolls
+
+        if not silent and not return_log_only:
+            icon = "🌟" if roll == 20 else ("✅" if is_success else "❌")
+            print(f"   {icon} {result_desc}!")
+
+        if return_log_only:
+            return is_success, log_check_str
+        else:
+            bank_ref.add_log(f"CHECK: {log_check_str}")
+            return is_success
 
 
-class Unit:
-    def __init__(self, name, unit_type, bonuses, quantity=1):
+class DowntimeUnit:
+    def __init__(self, name, unit_type, bonuses, qty=1):
         self.name = name
-        self.unit_type = unit_type  # "Squadra" o "Stanza"
-        self.bonuses = (
-            bonuses  # dict di bonus per risorsa es: {"MO": 2, "Influenza": 1}
-        )
-        self.quantity = quantity
+        self.unit_type = unit_type
+        self.bonuses = bonuses
+        self.qty = qty
+
+    def get_bonus_for_resource(self, resource_type):
+        base = self.bonuses.get(resource_type, 0)
+        return base * self.qty
 
     def to_dict(self):
         return {
             "name": self.name,
-            "unit_type": self.unit_type,
+            "type": self.unit_type,
             "bonuses": self.bonuses,
-            "quantity": self.quantity,
+            "qty": self.qty,
         }
-
-    @staticmethod
-    def from_dict(data):
-        """
-        Build a Unit from a dict.
-
-        Supports both:
-        - new format:  name, unit_type, bonuses, quantity
-        - old format:  name, type, bonuses, qty
-        """
-        name = data.get("name", "Unnamed unit")
-        unit_type = data.get("unit_type") or data.get("type") or "Unknown"
-        bonuses = data.get("bonuses", {})
-        quantity = data.get("quantity", data.get("qty", 1))
-
-        return Unit(
-            name=name,
-            unit_type=unit_type,
-            bonuses=bonuses,
-            quantity=quantity,
-        )
 
 
 class Guild:
-    def __init__(
-        self,
-        name,
-        description,
-        starting_resources,
-        starting_units=None,
-        active_effects=None,
-    ):
+    def __init__(self, name):
         self.name = name
-        self.description = description
-        self.resources = starting_resources.copy()
         self.units = []
-        self.active_effects = active_effects if active_effects is not None else []
+        self.active_effects = []
 
-        if starting_units:
-            for u in starting_units:
-                self.add_unit(
-                    u["name"], u["type"], u["bonuses"], quantity=u.get("qty", 1)
-                )
-
-    def add_unit(self, name, unit_type, bonuses, quantity=1):
-        self.units.append(Unit(name, unit_type, bonuses, quantity))
-
-    def apply_effects(self, bank):
-        for effect_name in self.active_effects:
-            effect = GUILD_EFFECTS.get(effect_name)
-            if not effect:
-                continue
-            if "influenza_bonus" in effect:
-                bank.modify("Influenza", effect["influenza_bonus"], effect_name)
-            if "event_chance_bonus" in effect:
-                bank.event_chance += effect["event_chance_bonus"]
-                bank.add_history_entry(
-                    f"[EFFETTO] {effect_name}: probabilità eventi +{effect['event_chance_bonus']}%."
-                )
-
-    def describe(self):
-        print(f"\n=== {self.name} ===")
-        print(self.description)
-        print("\n[Unità attive]:")
-        if not self.units:
-            print("  Nessuna unità attiva.")
-        else:
-            for u in self.units:
+    def add_unit(self, unit):
+        for existing in self.units:
+            if existing.name == unit.name:
+                existing.qty += 1
                 print(
-                    f"  - {u.name} ({u.unit_type}) x{u.quantity} | Bonus: {u.bonuses}"
+                    f"Unità {unit.name} esistente trovata. Quantità aumentata a {existing.qty}."
                 )
-        if self.active_effects:
-            print("\n[Effetti di Gilda attivi]:")
-            for eff in self.active_effects:
-                desc = GUILD_EFFECTS.get(eff, {}).get("description", "")
-                print(f"  - {eff}: {desc}")
+                return
+        self.units.append(unit)
+
+    def add_effect(self, name, bonus_val, duration_days):
+        self.active_effects.append(
+            {"name": name, "bonus": bonus_val, "days_left": duration_days}
+        )
+
+    def process_daily_effects(self):
+        active = []
+        expired = []
+        for eff in self.active_effects:
+            eff["days_left"] -= 1
+            if eff["days_left"] > 0:
+                active.append(eff)
+            else:
+                expired.append(eff["name"])
+        self.active_effects = active
+        return expired
+
+    def calculate_total_bonus(self, resource_type):
+        total = 0
+        details = []
+        for unit in self.units:
+            b = unit.get_bonus_for_resource(resource_type)
+            if b > 0:
+                total += b
+                details.append(f"{unit.name} (x{unit.qty}): +{b}")
+        for eff in self.active_effects:
+            total += eff["bonus"]
+            details.append(f"EFFETTO [{eff['name']}]: +{eff['bonus']}")
+        return total, details
 
 
 class ResourceBank:
-    def __init__(self, save_file=None):
+    def __init__(self):
         self.resources = {
             "MO": 0.0,
             "Merci": 0,
@@ -350,22 +320,13 @@ class ResourceBank:
         self.history = []
         self.guild_control_lost = False
 
-        # Path del file di salvataggio per questa istanza
-        # - se save_file è None -> usa DEFAULT_SAVE_FILE (Cacciatori_di_Taglie)
-        # - altrimenti usa il path passato (per altre gilde o percorsi custom)
-        self.save_file = Path(save_file) if save_file is not None else DEFAULT_SAVE_FILE
-
     def modify(self, resource, amount, reason=""):
         """
         Gestisce l'aggiunta/rimozione di risorse e applica i Costi di Conseguimento (GP).
         Restituisce (amount_effettivo, costo_gp).
         """
-        if resource not in self.resources:
-            raise ValueError(f"Risorsa sconosciuta: {resource}")
-
-        original_amount = amount
+        cost_gp = 0.0
         actual_amount = amount
-        cost_gp = 0
 
         # Se stiamo GUADAGNANDO capitale (non MO), c'è un costo in MO
         if amount > 0 and resource in EARN_COSTS and resource != "MO":
@@ -387,54 +348,19 @@ class ResourceBank:
                 actual_amount = affordable_amount
                 cost_gp = actual_cost
 
-                # Se reason non è vuota, segnalo il cap nel log (opzionale, gestito fuori)
-
         # Applicazione modifica risorsa target
         if resource == "MO":
             new_val = self.resources[resource] + actual_amount
+            self.resources[resource] = round(max(0.0, new_val), 2)
         else:
             new_val = self.resources[resource] + actual_amount
-
-        # Le risorse (eccetto MO) non possono scendere sotto 0
-        if resource != "MO":
-            new_val = max(0, new_val)
-
-        self.resources[resource] = round(new_val, 2)
-
-        # Log dell'operazione
-        if reason:
-            if original_amount != actual_amount:
-                self.add_history_entry(
-                    f"[RISORSE] {reason}: {resource} {original_amount:+} "
-                    f"(effettivo: {actual_amount:+}, costo in MO: {cost_gp}). "
-                    f"Nuovo totale {resource} = {self.resources[resource]}"
-                )
-            else:
-                self.add_history_entry(
-                    f"[RISORSE] {reason}: {resource} {actual_amount:+} "
-                    f"(costo in MO: {cost_gp}). Nuovo totale {resource} = {self.resources[resource]}"
-                )
+            self.resources[resource] = int(max(0, new_val))
 
         return actual_amount, cost_gp
 
-    def gain_resource(self, resource, amount, reason="Guadagno risorsa"):
-        """Wrapper per guadagnare risorse: usa modify in modalità 'gain'."""
-        return self.modify(resource, amount, reason=reason)
-
-    def spend_resource(self, resource, amount, reason="Spesa risorsa"):
-        """Wrapper per spendere risorse (amount positivo, internamente convertito in negativo)."""
-        return self.modify(resource, -abs(amount), reason=reason)
-
-    def set_character_stat(self, stat_name, value):
-        if stat_name not in self.character_stats:
-            raise ValueError(f"Statistiche sconosciute: {stat_name}")
-        self.character_stats[stat_name] = value
-        self.add_history_entry(f"[STATS] {stat_name} impostata a {value}.")
-
-    def add_history_entry(self, entry):
-        timestamp = time.strftime("%d/%m/%Y %H:%M:%S")
-        self.history.append(f"[{timestamp}] {entry}")
-        # Manteniamo al massimo 200 voci per non gonfiare il file
+    def add_log(self, text):
+        prefix = f"Giorno {self.day_counter}:"
+        self.history.append(f"{prefix} {text}")
         if len(self.history) > 200:
             self.history.pop(0)
 
@@ -450,13 +376,13 @@ class ResourceBank:
             "guild_units": [u.to_dict() for u in guild.units],
             "active_effects": guild.active_effects,
         }
-        with self.save_file.open("w", encoding="utf-8") as f:
+        with SAVE_FILE.open("w", encoding="utf-8") as f:
             json.dump(data, f, indent=4, ensure_ascii=False)
 
     def load_state(self):
-        if not self.save_file.exists():
+        if not SAVE_FILE.exists():
             return None
-        with self.save_file.open("r", encoding="utf-8") as f:
+        with SAVE_FILE.open("r", encoding="utf-8") as f:
             return json.load(f)
 
 
@@ -465,897 +391,636 @@ class ResourceBank:
 # ==========================================
 
 
-def handle_mercenary_event(d100_roll, bank, guild):
-    """
-    Gestisce un evento casuale basato su un tiro d100, adattato al tema
-    della Gilda di Cacciatori di Taglie.
-    """
-    if d100_roll <= 20:
-        event = {
-            "name": "Taglia Facile",
-            "description": "Un bersaglio minore viene catturato senza troppi problemi.",
-            "resource": "MO",
-            "amount": 20,
-        }
-    elif d100_roll <= 40:
-        event = {
-            "name": "Taglia Importante",
-            "description": "Un criminale ricercato di medio profilo viene catturato.",
-            "resource": "MO",
-            "amount": 40,
-        }
-    elif d100_roll <= 60:
-        event = {
-            "name": "Perdita di Equipaggiamento",
-            "description": "Durante una missione, parte dell'equipaggiamento viene perso.",
-            "resource": "Merci",
-            "amount": -2,
-        }
-    elif d100_roll <= 80:
-        event = {
-            "name": "Feriti in Missione",
-            "description": "Alcuni membri vengono feriti e richiedono cure.",
-            "resource": "Manodopera",
-            "amount": -2,
-        }
-    else:
-        event = {
-            "name": "Caccia al Mostro Leggendario",
-            "description": "Una missione estremamente pericolosa, ma remunerativa.",
-            "resource": "MO",
-            "amount": 60,
-        }
+def handle_mercenary_event(d100, engine, silent=False):
+    bank = engine.bank
+    guild = engine.guild
 
-    print(f"\n[EVENTO CASUALE - MERCENARI] {event['name']}")
-    print(event["description"])
-    bank.modify(event["resource"], event["amount"], event["name"])
-    return event
+    if not silent:
+        print(f"\n🚨 EVENTO SCATTATO! (Tiro d100: {d100})")
 
+    name_evt = "Sconosciuto"
+    check_str = "-"
+    result_str = "Nessun effetto"
 
-def handle_influence_event(d100_roll, bank, guild):
-    """
-    Gestisce un evento casuale legato all'Influenza.
-    """
-    if d100_roll <= 25:
-        event = {
-            "name": "Voci Favorevoli",
-            "description": "La popolazione parla bene della gilda.",
-            "resource": "Influenza",
-            "amount": 2,
-        }
-    elif d100_roll <= 50:
-        event = {
-            "name": "Critiche Pubbliche",
-            "description": "Un nobile o un'organizzazione critica la gilda.",
-            "resource": "Influenza",
-            "amount": -2,
-        }
-    elif d100_roll <= 75:
-        event = {
-            "name": "Richiesta Ufficiale",
-            "description": "Le autorità chiedono l'intervento della gilda su un caso delicato.",
-            "resource": "Influenza",
-            "amount": 3,
-        }
-    else:
-        event = {
-            "name": "Scandalo Interno",
-            "description": "Uno scandalo coinvolge un membro della gilda.",
-            "resource": "Influenza",
-            "amount": -4,
-        }
+    # 01-15 Risultati impressionanti
+    if 1 <= d100 <= 15:
+        name_evt = "Risultati Impressionanti"
+        if not silent:
+            print(f"📜 {name_evt}")
+        inf, _, _ = DiceRoller.roll_die(4, 0, silent=True)
+        man, _, _ = DiceRoller.roll_die(2, 0, silent=True)
+        days, _, _ = DiceRoller.roll_die(6, 0, silent=True)
 
-    print(f"\n[EVENTO CASUALE - INFLUENZA] {event['name']}")
-    print(event["description"])
-    bank.modify(event["resource"], event["amount"], event["name"])
-    return event
+        bank.resources["Influenza"] += inf
+        bank.resources["Manodopera"] += man
 
+        guild.add_effect("Risultati Impressionanti (+10)", 10, days)
+        check_str = "-"
+        result_str = f"+{inf} Inf, +{man} Man, Buff +10 ({days}gg)"
 
-def handle_magic_event(d100_roll, bank, guild):
-    """
-    Gestisce un evento casuale legato alla Magia.
-    """
-    if d100_roll <= 30:
-        event = {
-            "name": "Ritrovamento di Tomo Arcano",
-            "description": "Un tomo di magia viene ritrovato inaspettatamente.",
-            "resource": "Magia",
-            "amount": 1,
-        }
-    elif d100_roll <= 60:
-        event = {
-            "name": "Incidente Magico",
-            "description": "Un esperimento va storto e le risorse magiche vengono consumate.",
-            "resource": "Magia",
-            "amount": -1,
-        }
-    elif d100_roll <= 85:
-        event = {
-            "name": "Aiuto di un Mago",
-            "description": "Un mago decide di aiutare la gilda temporaneamente.",
-            "resource": "Magia",
-            "amount": 2,
-        }
-    else:
-        event = {
-            "name": "Rottura di Sigillo",
-            "description": "Un sigillo magico difettoso causa gravi perdite.",
-            "resource": "Magia",
-            "amount": -2,
-        }
+    # 16-25 Guadagno inaspettato
+    elif 16 <= d100 <= 25:
+        name_evt = "Guadagno Inaspettato"
+        if not silent:
+            print(f"📜 {name_evt}")
+        d10, _, _ = DiceRoller.roll_die(10, 0, silent=True)
+        mo = d10 * 10
+        merci, _, _ = DiceRoller.roll_die(6, 0, silent=True)
 
-    print(f"\n[EVENTO CASUALE - MAGIA] {event['name']}")
-    print(event["description"])
-    bank.modify(event["resource"], event["amount"], event["name"])
-    return event
+        bank.resources["MO"] += mo
+        bank.resources["Magia"] += 1
+        bank.resources["Merci"] += merci
 
+        check_str = "-"
+        result_str = f"+{mo} MO, +1 Magia, +{merci} Merci"
 
-# ==========================================
-# FUNZIONI DI UTILITY
-# ==========================================
-
-
-def clear_console():
-    if os.name == "nt":
-        os.system("cls")
-    else:
-        os.system("clear")
-
-
-def print_header(title):
-    print("\n" + "=" * 60)
-    print(title)
-    print("=" * 60 + "\n")
-
-
-def choose_from_list(prompt, options):
-    """
-    Permette di scegliere un'opzione da una lista con fuzzy search.
-    """
-    while True:
-        print(prompt)
-        for i, opt in enumerate(options, start=1):
-            print(f"  {i}. {opt}")
-        print("  0. Annulla")
-
-        choice = input("\nScelta: ").strip()
-        if choice == "0":
-            return None
-        if choice.isdigit():
-            idx = int(choice)
-            if 1 <= idx <= len(options):
-                return options[idx - 1]
-
-        # Fuzzy match
-        matches = difflib.get_close_matches(choice, options, n=1, cutoff=0.4)
-        if matches:
-            print(f"Forse intendevi: {matches[0]} ?")
-            confirm = input("Confermare? (s/n): ").strip().lower()
-            if confirm == "s":
-                return matches[0]
-
-        print("Scelta non valida. Riprova.\n")
-
-
-def prompt_int(prompt, default=None, min_val=None, max_val=None):
-    while True:
-        s = input(prompt).strip()
-        if not s and default is not None:
-            return default
-        if not s:
-            print("Inserisci un valore numerico.")
-            continue
-        if not s.lstrip("-").isdigit():
-            print("Inserisci un numero intero.")
-            continue
-        val = int(s)
-        if min_val is not None and val < min_val:
-            print(f"Il valore minimo consentito è {min_val}.")
-            continue
-        if max_val is not None and val > max_val:
-            print(f"Il valore massimo consentito è {max_val}.")
-            continue
-        return val
-
-
-def prompt_float(prompt, default=None, min_val=None, max_val=None):
-    while True:
-        s = input(prompt).strip().replace(",", ".")
-        if not s and default is not None:
-            return default
-        if not s:
-            print("Inserisci un valore numerico.")
-            continue
-        try:
-            val = float(s)
-        except ValueError:
-            print("Inserisci un numero (usa . o , per i decimali).")
-            continue
-        if min_val is not None and val < min_val:
-            print(f"Il valore minimo consentito è {min_val}.")
-            continue
-        if max_val is not None and val > max_val:
-            print(f"Il valore massimo consentito è {max_val}.")
-            continue
-        return val
-
-
-def press_enter_to_continue():
-    input("\nPremi INVIO per continuare...")
-
-
-# ==========================================
-# SISTEMA DI GESTIONE GIORNALIERA
-# ==========================================
-
-
-class DowntimeDay:
-    def __init__(self, bank, guild):
-        self.bank = bank
-        self.guild = guild
-
-    def run_day(self):
-        clear_console()
-        print_header(f"Giorno di Gestione #{self.bank.day_counter}")
-        self.guild.describe()
-        self.print_resources()
-        self.print_stats()
-
-        # Applicazione effetti di gilda all'inizio del giorno
-        if self.guild.active_effects:
-            print("\n[Effetti di Gilda attivi]")
-            for eff in self.guild.active_effects:
-                desc = GUILD_EFFECTS.get(eff, {}).get("description", "")
-                print(f"  - {eff}: {desc}")
-            apply = (
-                input("\nApplicare effetti di gilda per questo giorno? (s/n) [s]: ")
-                .strip()
-                .lower()
-            )
-            if apply in ("", "s", "si"):
-                self.guild.apply_effects(self.bank)
-
-        while True:
-            print("\nAzioni possibili per questo giorno:")
-            print("  1. Gestione Risorse (Guadagna/Spendi/Compra)")
-            print("  2. Gestione Unità (Squadre/Stanze)")
-            print("  3. Giorno di Controllo Esecutivo")
-            print("  4. Tirare un Evento Casuale")
-            print("  5. Modificare Statistiche Personaggio")
-            print("  6. Visualizzare Registro Eventi")
-            print("  7. Fine del Giorno")
-            print("  0. Annulla e torna al menu principale")
-
-            choice = input("\nScelta: ").strip()
-
-            if choice == "1":
-                self.manage_resources()
-            elif choice == "2":
-                self.manage_units()
-            elif choice == "3":
-                self.run_control_check()
-            elif choice == "4":
-                self.run_random_event()
-            elif choice == "5":
-                self.modify_character_stats()
-            elif choice == "6":
-                self.show_history()
-            elif choice == "7":
-                self.end_day()
-                break
-            elif choice == "0":
-                print("Annullato. Ritorno al menu principale.")
-                break
-            else:
-                print("Scelta non valida. Riprova.")
-
-    def print_resources(self):
-        print("\n[Risorse Attuali]")
-        for k, v in self.bank.resources.items():
-            print(f"  - {k}: {v}")
-
-    def print_stats(self):
-        print("\n[Statistiche del Personaggio / Gestore della Gilda]")
-        for k, v in self.bank.character_stats.items():
-            print(f"  - {k}: {v}")
-
-    # -------------------------------------------------------
-    # Gestione Risorse
-    # -------------------------------------------------------
-
-    def manage_resources(self):
-        while True:
-            clear_console()
-            print_header("Gestione Risorse")
-            self.print_resources()
-            print("\nAzioni:")
-            print("  1. Guadagna Risorsa (Downtime: Guadagnare Capitale)")
-            print("  2. Spendi Risorsa")
-            print("  3. Compra Capitale (convertendo MO in altre risorse)")
-            print("  0. Torna indietro")
-
-            choice = input("\nScelta: ").strip()
-            if choice == "1":
-                self.action_earn_resource()
-            elif choice == "2":
-                self.action_spend_resource()
-            elif choice == "3":
-                self.action_buy_capital()
-            elif choice == "0":
-                break
-            else:
-                print("Scelta non valida. Riprova.")
-
-    def action_earn_resource(self):
-        print_header("Guadagnare Risorsa")
-        print("Scegli la risorsa da guadagnare:")
-        resources = list(self.bank.resources.keys())
-        chosen = choose_from_list("Risorse disponibili:", resources)
-        if not chosen:
-            return
-
-        base_amount = prompt_int(
-            f"Inserisci la quantità di {chosen} da guadagnare: ", min_val=1
-        )
-
-        # Applichiamo un tiro di abilità per simulare il downtime
-        print("\nScegli l'abilità usata per guadagnare la risorsa:")
-        stats = list(self.bank.character_stats.keys())
-        stat = choose_from_list("Statistiche disponibili:", stats)
-        if not stat:
-            return
-
-        bonus = self.bank.character_stats[stat]
-        total, roll = DiceRoller.roll_die(
+    # 26-50 Rissa
+    elif 26 <= d100 <= 50:
+        name_evt = "Rissa"
+        if not silent:
+            print(f"📜 {name_evt}")
+        success, log_chk = DiceRoller.skill_check(
+            ["Intimidire", "Professione (soldato)"],
             20,
-            bonus,
-            reason=f"Guadagnare {chosen} usando {stat}",
+            bank,
+            silent,
+            return_log_only=True,
         )
-
-        # DC base 15, modificabile
-        dc = 15
-        print(f"DC base per l'azione: {dc}")
-        if total >= dc:
-            amount = base_amount
-            print(
-                f"Successo! Guadagni {amount} {chosen} (prima dei costi in GP, se applicabili)."
-            )
-            self.bank.modify(
-                chosen,
-                amount,
-                reason=f"Guadagnare {chosen} (Downtime, successo tiro abilità)",
-            )
+        check_str = log_chk
+        if success:
+            result_str = "Sedata. Nessuna perdita."
         else:
-            print(
-                "Fallimento nel tiro di abilità: nessuna risorsa guadagnata "
-                "(ma non perdi MO se il tiro fallisce)."
-            )
-            self.bank.add_history_entry(
-                f"[DOWNTIME] Tentativo di guadagnare {chosen} usando {stat} fallito (1d20 + {bonus} = {total} vs DC {dc})."
-            )
+            li, _, _ = DiceRoller.roll_die(4, 0, silent=True)
+            lm, _, _ = DiceRoller.roll_die(2, 0, silent=True)
+            bank.modify("Influenza", -li)
+            bank.modify("Manodopera", -lm)
+            result_str = f"FALLITO. Persi {li} Inf, {lm} Man."
 
-        press_enter_to_continue()
-
-    def action_spend_resource(self):
-        print_header("Spendere Risorsa")
-        print("Scegli la risorsa da spendere:")
-        resources = list(self.bank.resources.keys())
-        chosen = choose_from_list("Risorse disponibili:", resources)
-        if not chosen:
-            return
-
-        max_spendable = int(self.bank.resources[chosen]) if chosen != "MO" else None
-        if chosen != "MO":
-            print(f"Puoi spendere al massimo {max_spendable} {chosen}.")
-        amount = prompt_int(
-            f"Inserisci la quantità di {chosen} da spendere: ",
-            min_val=1,
-            max_val=max_spendable if max_spendable is not None else None,
-        )
-
-        self.bank.spend_resource(chosen, amount, reason="Spesa manuale di risorsa")
-        print(f"Hai speso {amount} {chosen}.")
-        press_enter_to_continue()
-
-    def action_buy_capital(self):
-        print_header("Comprare Capitale")
-        print("Puoi convertire MO in altre risorse in base alla tabella BUY_COSTS.")
-        print("Costi per 1 punto di risorsa:")
-        for res, cost in BUY_COSTS.items():
-            if res == "MO":
-                continue
-            print(f"  - {res}: {cost} MO")
-
-        print(f"\nHai attualmente {self.bank.resources['MO']} MO.")
-        resource = choose_from_list(
-            "Scegli la risorsa da comprare:", [r for r in BUY_COSTS.keys() if r != "MO"]
-        )
-        if not resource:
-            return
-
-        cost_per_point = BUY_COSTS[resource]
-        max_points = int(self.bank.resources["MO"] // cost_per_point)
-        if max_points <= 0:
-            print(
-                "Non hai abbastanza MO per comprare nemmeno 1 punto di questa risorsa."
-            )
-            press_enter_to_continue()
-            return
-
-        print(f"Puoi comprare fino a {max_points} punti di {resource}.")
-        amount = prompt_int(
-            f"Quanti punti di {resource} vuoi comprare?: ",
-            min_val=1,
-            max_val=max_points,
-        )
-
-        total_cost = amount * cost_per_point
-        self.bank.resources["MO"] = round(self.bank.resources["MO"] - total_cost, 2)
-        self.bank.resources[resource] += amount
-        self.bank.add_history_entry(
-            f"[ACQUISTO CAPITALE] Acquistati {amount} punti di {resource} per {total_cost} MO."
-        )
-
-        print(f"Hai acquistato {amount} {resource} per {total_cost} MO.")
-        press_enter_to_continue()
-
-    # -------------------------------------------------------
-    # Gestione Unità (Squadre e Stanze)
-    # -------------------------------------------------------
-
-    def manage_units(self):
-        while True:
-            clear_console()
-            print_header("Gestione Unità (Squadre e Stanze)")
-            self.print_units()
-
-            print("\nAzioni:")
-            print("  1. Recluta/Costruisci nuova Unità")
-            print("  2. Aumenta quantità di Unità esistente")
-            print("  3. Riduci quantità di Unità esistente")
-            print("  0. Torna indietro")
-
-            choice = input("\nScelta: ").strip()
-            if choice == "1":
-                self.action_recruit_unit()
-            elif choice == "2":
-                self.action_increase_unit()
-            elif choice == "3":
-                self.action_decrease_unit()
-            elif choice == "0":
-                break
-            else:
-                print("Scelta non valida. Riprova.")
-
-    def print_units(self):
-        print("\n[Unità attuali della Gilda]")
-        if not self.guild.units:
-            print("  Nessuna unità reclutata o stanza costruita.")
-            return
-        for i, u in enumerate(self.guild.units, start=1):
-            print(f"  {i}. {u.name} ({u.unit_type}) x{u.quantity} | Bonus: {u.bonuses}")
-
-    def action_recruit_unit(self):
-        clear_console()
-        print_header("Recluta/Costruisci nuova Unità")
-        print(
-            "Puoi reclutare una Squadra o costruire una Stanza, se hai le risorse necessarie."
-        )
-
-        options = list(SQUAD_ROOMS_COSTS.keys())
-        chosen = choose_from_list(
-            "Scegli una Squadra o una Stanza da reclutare/costruire:", options
-        )
-        if not chosen:
-            return
-
-        cost = SQUAD_ROOMS_COSTS[chosen]
-        print(f"\nCosti per {chosen}:")
-        for res, c in cost.items():
-            print(f"  - {res}: {c}")
-
-        # Controllo risorse sufficienti
-        for res, c in cost.items():
-            if self.bank.resources[res] < c:
-                print(f"\nNon hai abbastanza {res} per reclutare/costruire {chosen}.")
-                press_enter_to_continue()
-                return
-
-        # Sottraiamo i costi
-        for res, c in cost.items():
-            self.bank.resources[res] -= c
-
-        # Determiniamo se è Squadra o Stanza (semplifichiamo: se esiste nel DB squadre o stanze)
-        if chosen in [
-            "Agente",
-            "Artigiani",
-            "Guardia del Corpo",
-            "Informatori",
-            "Mercenari",
-            "Spie",
-            "Cavalleria",
-            "Criminali",
-            "Cultisti",
-            "Guaritori",
-            "Mendicanti",
-            "Marinai",
-            "Rapinatori",
-            "Sacerdote",
-            "Saggio",
-            "Soldati",
-            "Soldati Scelti",
-            "Tagliaborse",
-            "Trasgressori",
-        ]:
-            unit_type = "Squadra"
+    # 51-70 Rivalità
+    elif 51 <= d100 <= 70:
+        name_evt = "Rivalità"
+        if not silent:
+            print(f"📜 {name_evt}")
+        d_dur, _, str_d = DiceRoller.roll_die(10, 0, silent=True)
+        guild.add_effect("Rivalità (-5)", -5, d_dur)
+        d_ch, _, str_ch = DiceRoller.roll_die(100, 0, silent=True)
+        extra_res = ""
+        if d_ch > 50:
+            loss, _, str_loss = DiceRoller.roll_die(4, 0, silent=True)
+            bank.modify("Influenza", -loss)
+            extra_res = f" | Danno Extra: -{loss} Inf (d100[{d_ch}]>50, d4[{loss}])"
         else:
-            unit_type = "Stanza"
+            extra_res = f" | Nessun danno extra (d100[{d_ch}]<=50)"
+        check_str = f"Durata ({str_d.split(':')[1].strip()}), Chance ({str_ch.split(':')[1].strip()}){extra_res}"
+        result_str = f"Penalità -5 per {d_dur}gg"
 
-        # Bonus generici di esempio
-        bonuses = {}
-        if unit_type == "Squadra":
-            bonuses["MO"] = 2
-            bonuses["Influenza"] = 1
+    # 71-80 Scandalo
+    elif 71 <= d100 <= 80:
+        name_evt = "Scandalo"
+        if not silent:
+            print(f"📜 {name_evt}")
+        d1, _, _ = DiceRoller.roll_die(4, 0, silent=True)
+        d2, _, _ = DiceRoller.roll_die(4, 0, silent=True)
+        days = d1 + d2
+        guild.add_effect("Scandalo (-5)", -5, days)
+        li, _, _ = DiceRoller.roll_die(2, 0, silent=True)
+        bank.modify("Influenza", -li)
+        check_str = f"Durata 2d4[{d1}+{d2}]={days}"
+        result_str = f"Penalità -5 ({days}gg). Persi {li} Inf."
+
+    # 81-85 Duello
+    elif 81 <= d100 <= 85:
+        name_evt = "Duello"
+        if not silent:
+            print(f"📜 {name_evt}")
+        success, log_chk = DiceRoller.skill_check(
+            "Professione (soldato)", 25, bank, silent, return_log_only=True
+        )
+        check_str = log_chk
+        if success:
+            guild.add_effect("Vittoria Duello (+2)", 2, 7)
+            result_str = "VITTORIA. Buff +2 (7gg)."
         else:
-            bonuses["MO"] = 1
+            lm, _, _ = DiceRoller.roll_die(2, 0, silent=True)
+            bank.modify("Manodopera", -lm)
+            result_str = f"SCONFITTA. Persi {lm} Man."
 
-        self.guild.add_unit(chosen, unit_type, bonuses)
-        self.bank.add_history_entry(
-            f"[UNITÀ] Reclutata/Costruita nuova unità: {chosen} ({unit_type})."
-        )
-
-        print(f"Hai reclutato/costruito {chosen} ({unit_type}).")
-        press_enter_to_continue()
-
-    def action_increase_unit(self):
-        if not self.guild.units:
-            print("\nNon hai unità da aumentare.")
-            press_enter_to_continue()
-            return
-
-        print_header("Aumenta quantità di Unità esistente")
-        self.print_units()
-        idx = prompt_int(
-            "\nSeleziona il numero dell'unità da aumentare: ",
-            min_val=1,
-            max_val=len(self.guild.units),
-        )
-        unit = self.guild.units[idx - 1]
-
-        qty = prompt_int("Di quanto aumentare la quantità?: ", min_val=1)
-        unit.quantity += qty
-        self.bank.add_history_entry(
-            f"[UNITÀ] Aumentata quantità di {unit.name} di {qty}. Totale: {unit.quantity}."
-        )
-        print(f"Quantità di {unit.name} aumentata di {qty}.")
-        press_enter_to_continue()
-
-    def action_decrease_unit(self):
-        if not self.guild.units:
-            print("\nNon hai unità da ridurre.")
-            press_enter_to_continue()
-            return
-
-        print_header("Riduci quantità di Unità esistente")
-        self.print_units()
-        idx = prompt_int(
-            "\nSeleziona il numero dell'unità da ridurre: ",
-            min_val=1,
-            max_val=len(self.guild.units),
-        )
-        unit = self.guild.units[idx - 1]
-
-        max_remove = unit.quantity
-        qty = prompt_int(
-            f"Di quanto ridurre la quantità? (attuale: {unit.quantity}): ",
-            min_val=1,
-            max_val=max_remove,
-        )
-        unit.quantity -= qty
-        if unit.quantity <= 0:
-            self.bank.add_history_entry(
-                f"[UNITÀ] L'unità {unit.name} è stata sciolta/rimossa."
-            )
-            self.guild.units.remove(unit)
-            print(f"L'unità {unit.name} è stata rimossa del tutto.")
-        else:
-            self.bank.add_history_entry(
-                f"[UNITÀ] Ridotta quantità di {unit.name} di {qty}. Totale: {unit.quantity}."
-            )
-            print(f"Quantità di {unit.name} ridotta di {qty}.")
-
-        press_enter_to_continue()
-
-    # -------------------------------------------------------
-    # Giorno di Controllo Esecutivo
-    # -------------------------------------------------------
-
-    def run_control_check(self):
-        clear_console()
-        print_header("Giorno di Controllo Esecutivo")
-
-        print("Scegli la difficoltà del Controllo Esecutivo:")
-        diff = choose_from_list(
-            "Difficoltà disponibili:", list(CONTROL_DC_TABLE.keys())
-        )
-        if not diff:
-            return
-
-        dc = CONTROL_DC_TABLE[diff]
-        print(f"\nDC per il Controllo Esecutivo: {dc}")
-
-        # Scegliamo una statistica di leadership
-        print(
-            "\nScegli la statistica principale usata per il controllo (es. Autorità):"
-        )
-        stat = choose_from_list("Statistiche:", list(self.bank.character_stats.keys()))
-        if not stat:
-            return
-        bonus = self.bank.character_stats[stat]
-
-        total, roll = DiceRoller.roll_die(
+    # 86-95 Scisma
+    elif 86 <= d100 <= 95:
+        name_evt = "Scisma"
+        if not silent:
+            print(f"📜 {name_evt}")
+        success, log_chk = DiceRoller.skill_check(
+            ["Diplomazia", "Intimidire", "Professione (soldato)"],
             20,
-            bonus,
-            reason=f"Controllo Esecutivo usando {stat}",
+            bank,
+            silent,
+            return_log_only=True,
         )
-
-        if total >= dc:
-            print("Successo nel Controllo Esecutivo!")
-            self.bank.add_history_entry(
-                f"[CONTROLLO ESECUTIVO] Successo (1d20 + {bonus} = {total} vs DC {dc})."
-            )
-            # Effetto base: piccolo bonus alle risorse
-            self.bank.modify("MO", 10, "Bonus Controllo Esecutivo (successo)")
-            self.bank.modify("Influenza", 1, "Bonus Controllo Esecutivo (successo)")
+        check_str = log_chk
+        if success:
+            bank.modify("Manodopera", -1)
+            result_str = "EVITATO. -1 Man (Epurazione)."
         else:
-            print("Fallimento nel Controllo Esecutivo.")
-            self.bank.add_history_entry(
-                f"[CONTROLLO ESECUTIVO] Fallimento (1d20 + {bonus} = {total} vs DC {dc})."
-            )
-            # Effetto negativo moderato
-            self.bank.modify(
-                "Influenza", -1, "Penalità Controllo Esecutivo (fallimento)"
-            )
+            li, _, _ = DiceRoller.roll_die(2, 0, silent=True)
+            lm, _, _ = DiceRoller.roll_die(2, 0, silent=True)
+            bank.modify("Manodopera", -lm)
+            bank.modify("Influenza", -li)
+            result_str = f"AVVENUTO. Persi {li} Inf, {lm} Man."
 
-        press_enter_to_continue()
+    # 96-100 Ammutinamento
+    elif 96 <= d100 <= 100:
+        name_evt = "Ammutinamento"
+        if not silent:
+            print(f"📜 {name_evt}")
 
-    # -------------------------------------------------------
-    # Eventi Casuali
-    # -------------------------------------------------------
+        bonus_inf = 0
+        used_inf_str = ""
+        if bank.resources["Influenza"] >= 5:
+            bank.modify("Influenza", -5)
+            bonus_inf = 5
+            used_inf_str = " (Spesi 5 Inf -> Bonus +5)"
+            if not silent:
+                print("   💎 Spesi 5 Influenza per bonus +5.")
 
-    def run_random_event(self):
-        clear_console()
-        print_header("Evento Casuale")
-
-        print(
-            "Scegli il tipo di evento da tirare o lascia che il sistema decida basandosi sulla probabilità."
+        success, log_chk = DiceRoller.skill_check(
+            ["Combattimento", "Intimidire", "Professione (soldato)"],
+            25,
+            bank,
+            silent,
+            extra_bonus=bonus_inf,
+            return_log_only=True,
         )
-        print("  1. Evento Mercenario (MO / Manodopera / rischi)")
-        print("  2. Evento di Influenza")
-        print("  3. Evento di Magia")
-        print("  4. Evento Generico (lista semplificata)")
-        print("  0. Annulla")
+        check_str = f"{log_chk}{used_inf_str}"
 
-        choice = input("\nScelta: ").strip()
-
-        if choice == "0":
-            return
-
-        d100_roll = random.randint(1, 100)
-        print(f"\nTiro d100 per l'evento: {d100_roll}")
-
-        if choice == "1":
-            handle_mercenary_event(d100_roll, self.bank, self.guild)
-        elif choice == "2":
-            handle_influence_event(d100_roll, self.bank, self.guild)
-        elif choice == "3":
-            handle_magic_event(d100_roll, self.bank, self.guild)
-        elif choice == "4":
-            self.run_generic_random_event(d100_roll)
+        if success:
+            bank.modify("Manodopera", -1)
+            result_str = "SEDATO. -1 Man."
         else:
-            print("Scelta non valida.")
-            return
+            bank.guild_control_lost = True
+            result_str = "CATASTROFE: Controllo Perso."
+            if not silent:
+                print("\n   💀 HAI PERSO IL CONTROLLO DELLA GILDA!")
 
-        press_enter_to_continue()
-
-    def run_generic_random_event(self, d100_roll):
-        # Scegli un evento dalla lista RANDOM_EVENTS in base al tiro
-        idx = min(len(RANDOM_EVENTS) - 1, d100_roll // (100 // len(RANDOM_EVENTS)))
-        event = RANDOM_EVENTS[idx]
-
-        print(f"\n[EVENTO CASUALE] {event['name']}")
-        print(event["description"])
-        self.bank.modify(event["resource"], event["amount"], event["name"])
-        return event
-
-    # -------------------------------------------------------
-    # Modifica Statistiche Personaggio
-    # -------------------------------------------------------
-
-    def modify_character_stats(self):
-        clear_console()
-        print_header("Modifica Statistiche del Personaggio")
-        self.print_stats()
-
-        stat = choose_from_list(
-            "Scegli la statistica da modificare:",
-            list(self.bank.character_stats.keys()),
-        )
-        if not stat:
-            return
-
-        val = prompt_int(
-            f"Inserisci il nuovo valore per {stat}: ", min_val=-10, max_val=50
-        )
-        self.bank.set_character_stat(stat, val)
-        print(f"{stat} è ora {val}.")
-        press_enter_to_continue()
-
-    # -------------------------------------------------------
-    # Registro Eventi e Fine Giorno
-    # -------------------------------------------------------
-
-    def show_history(self):
-        clear_console()
-        print_header("Registro Eventi (ultimi 200)")
-        if not self.bank.history:
-            print("Nessun evento registrato.")
-        else:
-            for entry in self.bank.history:
-                print(entry)
-        press_enter_to_continue()
-
-    def end_day(self):
-        self.bank.day_counter += 1
-        self.bank.add_history_entry("[FINE GIORNO] Fine del giorno di gestione.")
-        print("Giorno concluso.")
-        press_enter_to_continue()
+    bank.add_log(f"EVENTO ({d100} -> {name_evt})")
+    bank.add_log(f"CHECK: {check_str}")
+    bank.add_log(f"RISULTATO: {result_str}")
 
 
 # ==========================================
-# INTERFACCIA PRINCIPALE
+# MOTORE DI GIOCO
 # ==========================================
 
 
 class GameEngine:
-    def __init__(self, save_file=None):
-        # Inizializza la banca risorse con il file di salvataggio
-        self.bank = ResourceBank(save_file=save_file)
+    def __init__(self):
+        self.bank = ResourceBank()
         saved = self.bank.load_state()
-
         if saved:
-            # Rebuild guild from save file
-            name = saved.get("guild_name", DEFAULT_GUILD_CONFIG["name"])
-            starting_resources = saved.get(
-                "resources", DEFAULT_GUILD_CONFIG["starting_resources"]
-            )
-            units_data = saved.get("guild_units", [])
-
-            # Backward-compat for active_effects:
-            # - new format: list[str]
-            # - old format: list[dict{name, bonus, days_left}]
-            raw_active_effects = saved.get("active_effects", [])
-            if raw_active_effects and isinstance(raw_active_effects[0], dict):
-                active_effects = [
-                    e.get("name")
-                    for e in raw_active_effects
-                    if isinstance(e, dict) and "name" in e
-                ]
-            else:
-                active_effects = raw_active_effects
-            description = DEFAULT_GUILD_CONFIG["description"]
-            self.guild = Guild(
-                name=name,
-                description=description,
-                starting_resources=starting_resources,
-                starting_units=None,
-                active_effects=active_effects,
-            )
-            self.bank.resources = saved.get(
-                "resources", DEFAULT_GUILD_CONFIG["starting_resources"]
-            )
+            self.guild = Guild(saved["guild_name"])
+            self.bank.resources = saved["resources"]
             self.bank.character_stats = saved.get(
                 "character_stats", self.bank.character_stats
             )
-            self.bank.day_counter = saved.get("day_counter", 1)
-            self.bank.event_chance = saved.get("event_chance", 20)
-            self.bank.history = saved.get("history", [])
+            self.bank.day_counter = saved["day_counter"]
+            self.bank.event_chance = saved["event_chance"]
+            self.bank.history = saved["history"]
             self.bank.guild_control_lost = saved.get("guild_control_lost", False)
+            self.guild.active_effects = saved.get("active_effects", [])
 
-            for u_data in units_data:
-                self.guild.units.append(Unit.from_dict(u_data))
+            # Merge stats
+            saved_stats = saved.get("character_stats", {})
+            for k, v in self.bank.character_stats.items():
+                if k not in saved_stats:
+                    saved_stats[k] = v
+            self.bank.character_stats = saved_stats
 
-            self.bank.add_history_entry("[SISTEMA] Salvataggio caricato correttamente.")
-        else:
-            # Nuova gilda di default
-            cfg = DEFAULT_GUILD_CONFIG
-            self.guild = Guild(
-                name=cfg["name"],
-                description=cfg["description"],
-                starting_resources=cfg["starting_resources"],
-                starting_units=cfg["starting_units"],
-            )
-            self.bank.resources = cfg["starting_resources"].copy()
-            self.bank.add_history_entry("[SISTEMA] Nuova gilda creata.")
-
-    def main_menu(self):
-        while True:
-            clear_console()
-            print_header("Gilda dei Cacciatori di Taglie - Gestione Downtime")
-            self.guild.describe()
-            print("\n[Stato Gilda]")
-            for k, v in self.bank.resources.items():
-                print(f"  - {k}: {v}")
-            print(f"\nGiorno di gestione attuale: {self.bank.day_counter}")
-            print(f"Probabilità base Evento Casuale: {self.bank.event_chance}%")
-
-            print("\nAzioni principali:")
-            print("  1. Inizia/Gestisci un Giorno di Downtime")
-            print("  2. Forza un Evento Casuale")
-            print("  3. Visualizza Registro Eventi")
-            print("  4. Salva Manualmente e Continua")
-            print("  5. Salva ed Esci")
-            print("  0. Esci SENZA salvare")
-
-            choice = input("\nScelta: ").strip()
-
-            if choice == "1":
-                day = DowntimeDay(self.bank, self.guild)
-                day.run_day()
-                # Dopo un giorno, possibilmente far scattare un evento casuale
-                self.maybe_trigger_random_event()
-            elif choice == "2":
-                day = DowntimeDay(self.bank, self.guild)
-                day.run_random_event()
-            elif choice == "3":
-                day = DowntimeDay(self.bank, self.guild)
-                day.show_history()
-            elif choice == "4":
-                self.save()
-                print("Salvataggio completato.")
-                press_enter_to_continue()
-            elif choice == "5":
-                self.save()
-                print("Salvataggio completato. Uscita...")
-                break
-            elif choice == "0":
-                confirm = (
-                    input("Sei sicuro di voler uscire SENZA salvare? (s/n): ")
-                    .strip()
-                    .lower()
+            for u in saved["guild_units"]:
+                qty = u.get("qty", 1)
+                self.guild.add_unit(
+                    DowntimeUnit(u["name"], u["type"], u["bonuses"], qty)
                 )
-                if confirm == "s":
-                    print("Uscita senza salvataggio.")
-                    break
-            else:
-                print("Scelta non valida. Riprova.")
-                press_enter_to_continue()
+        else:
+            self.guild = Guild(DEFAULT_GUILD_CONFIG["name"])
+            for t in DEFAULT_GUILD_CONFIG["teams"]:
+                qty = t.get("qty", 1)
+                self.guild.add_unit(
+                    DowntimeUnit(t["name"], t["type"], t["bonuses"], qty)
+                )
+            for r in DEFAULT_GUILD_CONFIG["rooms"]:
+                qty = r.get("qty", 1)
+                self.guild.add_unit(
+                    DowntimeUnit(r["name"], r["type"], r["bonuses"], qty)
+                )
 
-    def save(self):
+        self.days_absent = 0
+
+    def clear(self):
+        os.system("cls" if os.name == "nt" else "clear")
+
+    def header(self):
+        self.clear()
+        status = "🔴 CONTROLLO PERSO" if self.bank.guild_control_lost else "🟢 ATTIVA"
+        print(
+            f"=== GIORNO {self.bank.day_counter} | {self.guild.name} | STATO: {status} ==="
+        )
+        res = self.bank.resources
+        res_line = (
+            f"💰 MO: {res['MO']:.2f} | 🗣️ Inf: {res['Influenza']} | ✨ Mag: {res['Magia']} | "
+            f"🔨 Man: {res['Manodopera']} | 📦 Mer: {res['Merci']}"
+        )
+        print(res_line)
+        s = self.bank.character_stats
+        stats_line = (
+            f"👤 [STATS] Dipl: +{s.get('Diplomazia', 0)} | Ragg: +{s.get('Raggirare', 0)} | "
+            f"Prof(Sold): +{s.get('Professione (soldato)', 0)} | Intim: +{s.get('Intimidire', 0)} | Aut: +{s.get('Autorità', 0)}"
+        )
+        print(stats_line)
+        teams = [
+            f"{u.name} x{u.qty}" for u in self.guild.units if u.unit_type == "Squadra"
+        ]
+        rooms = [
+            f"{u.name} x{u.qty}" for u in self.guild.units if u.unit_type != "Squadra"
+        ]
+        print(f"\n⚔️  SQUADRE: {', '.join(teams) if teams else 'Nessuna'}")
+        print(f"🏰 STANZE:  {', '.join(rooms) if rooms else 'Nessuna'}")
+        if self.guild.active_effects:
+            print("\n✨ EFFETTI ATTIVI:")
+            for eff in self.guild.active_effects:
+                print(f"   * {eff['name']}: {eff['days_left']} giorni rimasti")
+        print("=" * 60)
+
+    def ask_location(self):
+        print("\n🌍 SEI NELLA CITTÀ DELLA GILDA OGGI? (s/n)")
+        if input("> ").lower() == "s":
+            self.days_absent = 0
+        else:
+            try:
+                self.days_absent = int(input("Da quanti giorni sei via? "))
+                if self.days_absent < 0:
+                    self.days_absent = 0
+            except:
+                self.days_absent = 0
+
+    def attempt_regain_control(self, silent=False):
+        dc = max(0, self.days_absent - 10)
+        bonus = self.bank.character_stats.get("Autorità", 4)
+
+        if not silent:
+            print("\n🔒 TENTATIVO DI RIPRENDERE IL CONTROLLO")
+            print(f"   Tiro: d20 + Autorità ({bonus}) vs CD {dc}")
+
+        total, natural, _ = DiceRoller.roll_die(20, bonus, "Tiro Controllo", silent)
+        success = total >= dc
+        result_str = "SUCCESSO" if success else "FALLIMENTO"
+
+        self.bank.add_log(
+            f"CHECK: TIRO CONTROLLO {total} (d20[{natural}]+{bonus}) vs CD {dc} -> {result_str}"
+        )
+
+        if success:
+            self.bank.guild_control_lost = False
+            self.bank.event_chance = 20
+            if not silent:
+                print("   🎉 CONTROLLO RIPRESO! La gilda torna operativa.")
+        else:
+            if not silent:
+                print("   🔒 FALLITO. La gilda resta bloccata.")
+
+        return success
+
+    def process_event(self, silent=False):
+        if self.bank.guild_control_lost:
+            return False
+        roll, _, _ = DiceRoller.roll_die(100, 0, "Check Probabilità Evento", silent)
+        threshold = self.bank.event_chance
+        if not silent:
+            print(f"   (Soglia attuale: {threshold}%)")
+
+        if roll <= threshold:
+            self.bank.event_chance = 20
+            ev_roll, _, _ = DiceRoller.roll_die(100, 0, "Tabella Mercenari", silent)
+            handle_mercenary_event(ev_roll, self, silent)
+            return True
+        else:
+            self.bank.event_chance = min(95, self.bank.event_chance + 5)
+            if not silent:
+                print("   ✅ Nessun evento.")
+            return False
+
+    def run_simulation(self):
+        self.header()
+        print("\n--- SIMULAZIONE MULTI-GIORNO ---")
+        try:
+            days = int(input("Quanti giorni vuoi simulare? "))
+            if days <= 0:
+                return
+        except:
+            return
+
+        start_res = self.bank.resources.copy()
+
+        is_leaving = False
+        if self.days_absent == 0:
+            print(f"\nPartirai lasciando la città durante questi {days} giorni? (s/n)")
+            if input("> ").lower() == "s":
+                is_leaving = True
+                print(
+                    "   [INFO] I giorni di assenza verranno contati a partire da oggi."
+                )
+        else:
+            print(
+                f"\n   [INFO] Sei già via da {self.days_absent} giorni. Il conteggio continuerà."
+            )
+
+        print("\nStrategia:")
+        print("[U] Uniforme (MO -> Mer -> Inf...)")
+        print("[F] Focalizzata (Una risorsa)")
+        strat = input("> ").lower()
+
+        target_res = None
+        res_cycle = ["MO", "Merci", "Influenza", "Magia", "Manodopera"]
+
+        if strat == "f":
+            for i, r in enumerate(res_cycle, 1):
+                print(f"[{i}] {r}")
+            try:
+                target_res = res_cycle[int(input("> ")) - 1]
+            except:
+                return
+
+        print("\nMetodo Dadi:")
+        print("[1] Prendi 10")
+        print("[2] Tira d20")
+        sim_mode = input("> ")
+
+        print(f"\nAvvio simulazione {days} giorni...")
+        self.bank.add_log(f"--- INIZIO SIMULAZIONE {days} GIORNI ---")
+
+        events_happened = 0
+        total_spent_gp = 0
+
+        for d in range(days):
+            if self.days_absent > 0 or is_leaving:
+                self.days_absent += 1
+
+            if self.bank.guild_control_lost:
+                if self.attempt_regain_control(silent=True):
+                    self.bank.day_counter += 1
+                    continue
+                else:
+                    self.bank.day_counter += 1
+                    continue
+
+            if self.process_event(silent=True):
+                events_happened += 1
+                if self.bank.guild_control_lost:
+                    self.bank.day_counter += 1
+                    continue
+
+            self.guild.process_daily_effects()
+
+            if strat == "u":
+                daily_res = res_cycle[self.bank.day_counter % 5]
+            else:
+                daily_res = target_res
+
+            bonus, _ = self.guild.calculate_total_bonus(daily_res)
+
+            if bonus == 0:
+                roll = 10
+            else:
+                roll = random.randint(1, 20) if sim_mode == "2" else 10
+
+            total_roll = roll + bonus
+            earned = math.floor(total_roll / 10)
+            if daily_res == "MO":
+                earned = total_roll / 10
+
+            actual_earned, cost_gp = self.bank.modify(daily_res, earned)
+            total_spent_gp += cost_gp
+
+            if actual_earned > 0:
+                cost_str = f" (Costo {cost_gp} mo)" if cost_gp > 0 else ""
+                self.bank.add_log(f"ATTIVITÀ: {daily_res} +{actual_earned}{cost_str}")
+            elif earned > 0 and actual_earned == 0:
+                self.bank.add_log(
+                    f"ATTIVITÀ: {daily_res} FALLITA (Fondi Insufficienti)"
+                )
+
+            self.bank.day_counter += 1
+
+        net_gains = {k: v - start_res[k] for k, v in self.bank.resources.items()}
+
+        self.bank.add_log(
+            f"--- FINE SIMULAZIONE (Netto: {net_gains}, Spese: {total_spent_gp}) ---"
+        )
         self.bank.save_state(self.guild)
 
-    def maybe_trigger_random_event(self):
-        """
-        Dopo ogni giorno, c'è una certa probabilità che si verifichi un evento casuale,
-        basata su self.bank.event_chance.
-        """
-        chance = self.bank.event_chance
-        roll = random.randint(1, 100)
-        print(f"\n[CHECK EVENTO CASUALE] Probabilità {chance}%, tiro d100 = {roll}")
-        if roll <= chance:
-            print("Un evento casuale si verifica!")
-            day = DowntimeDay(self.bank, self.guild)
-            day.run_random_event()
-            # Facoltativo: dopo un evento, ridurre leggermente la probabilità o altro
+        print("\n--- FINE SIMULAZIONE ---")
+        print(f"Eventi accaduti: {events_happened}")
+        print(f"SPESE OPERATIVE (Costi conseguimento): {total_spent_gp} mo")
+        print("\nBILANCIO NETTO (Finale - Iniziale):")
+        for k, v in net_gains.items():
+            fmt = f"{v:.2f}" if k == "MO" else f"{v}"
+            print(f"  - {k}: {fmt}")
+
+        if self.bank.guild_control_lost:
+            print(
+                "\n⚠️ ATTENZIONE: La simulazione è terminata con la Gilda fuori controllo!"
+            )
+        input("\nPremi INVIO...")
+
+    def generate_capital_single(self):
+        if self.bank.guild_control_lost:
+            print("\n⛔ CONTROLLO PERSO! Azione bloccata.")
+            if input("Tenti di riprendere il controllo? (s/n) ") == "s":
+                self.attempt_regain_control()
+                self.bank.day_counter += 1
+                self.bank.save_state(self.guild)
+            return
+
+        print("\n--- ATTIVITÀ GIORNALIERA ---")
+        opts = ["MO", "Merci", "Influenza", "Magia", "Manodopera"]
+        for i, r in enumerate(opts, 1):
+            tot, _ = self.guild.calculate_total_bonus(r)
+            print(f"[{i}] {r} (+{tot})")
+
+        try:
+            idx = int(input("\nScelta (1-5): ")) - 1
+            res_type = opts[idx]
+        except:
+            return
+
+        bonus, details = self.guild.calculate_total_bonus(res_type)
+
+        print(f"\n📊 CALCOLO: +{bonus}")
+        for d in details:
+            print(f"   + {d}")
+
+        print("\n[INVIO] Prendi 10 | [T] Tira dado")
+        choice = input("> ").lower()
+
+        if choice == "t":
+            total, roll, log_d = DiceRoller.roll_die(
+                20, bonus, f"Generazione {res_type}"
+            )
+            log_chk = f"d20[{roll}]+{bonus}"
         else:
-            print("Nessun evento casuale oggi.")
-        press_enter_to_continue()
+            total = 10 + bonus
+            log_chk = f"Take10+{bonus}"
+            print(f"\n🔢 CALCOLO: 10 + {bonus} = {total}")
 
+        earned = math.floor(total / 10)
+        if res_type == "MO":
+            earned = total / 10
 
-def main():
-    engine = GameEngine()
-    engine.main_menu()
+        actual_earned, cost_gp = self.bank.modify(res_type, earned)
+
+        cost_log = f" (Costo {cost_gp} mo)" if cost_gp > 0 else ""
+        if earned > actual_earned:
+            print(
+                f"⚠️ Fondi insufficienti per tutto il guadagno. Ottenuto solo {actual_earned}."
+            )
+            cost_log += " [CAP FONDI]"
+
+        self.bank.add_log(f"ATTIVITÀ ({res_type})")
+        self.bank.add_log(f"CHECK: {log_chk} = {total}")
+        self.bank.add_log(f"RISULTATO: +{actual_earned} {res_type}{cost_log}")
+
+        print(f"\n🎉 RISULTATO: +{actual_earned} {res_type}")
+        if cost_gp > 0:
+            print(f"💸 SPESI: {cost_gp} mo")
+
+        self.bank.day_counter += 1
+        self.bank.save_state(self.guild)
+        input("\n[INVIO] per chiudere giorno...")
+
+    def add_unit_smart(self):
+        self.header()
+        print("\n--- AGGIUNGI UNITÀ ---")
+        query = input("Nome unità: ").strip()
+        matches = difflib.get_close_matches(
+            query, list(GAME_DATABASE.keys()), n=1, cutoff=0.6
+        )
+
+        if matches:
+            found = matches[0]
+            data = GAME_DATABASE[found]
+            print(f"✅ Trovato: {found} | Bonus: {data}")
+            u_type = (
+                "Squadra"
+                if any(
+                    x in found for x in ["Soldati", "Arcieri", "Sacerdote", "Lacchè"]
+                )
+                else "Stanza"
+            )
+            try:
+                qty = int(input("Quantità (1): ") or 1)
+            except:
+                qty = 1
+            self.guild.add_unit(DowntimeUnit(found, u_type, data, qty))
+            self.bank.save_state(self.guild)
+            print("Salvato.")
+        else:
+            print("❌ Non trovato.")
+        input("...")
+
+    def edit_units_menu(self):
+        self.header()
+        print("\n--- MODIFICA UNITÀ ---")
+        for i, u in enumerate(self.guild.units, 1):
+            print(f"[{i}] {u.name} (x{u.qty})")
+        try:
+            idx = int(input("\nScegli (0 esci): ")) - 1
+            if idx < 0:
+                return
+            u = self.guild.units[idx]
+            nq = int(input(f"Nuova quantità per {u.name}: "))
+            if nq <= 0:
+                self.guild.units.pop(idx)
+            else:
+                u.qty = nq
+            self.bank.save_state(self.guild)
+        except:
+            pass
+
+    def edit_stats_menu(self):
+        self.header()
+        print("\n--- MODIFICA STATISTICHE ---")
+        keys = list(self.bank.character_stats.keys())
+        for i, k in enumerate(keys, 1):
+            print(f"[{i}] {k}: {self.bank.character_stats[k]}")
+        try:
+            idx = int(input("Scegli: ")) - 1
+            k = keys[idx]
+            self.bank.character_stats[k] = int(input(f"Nuovo valore per {k}: "))
+            self.bank.save_state(self.guild)
+        except:
+            pass
+
+    def manual_mod(self):
+        res = input("\nRisorsa: ")
+        if res in self.bank.resources:
+            try:
+                qty = float(input("Quantità: "))
+                self.bank.modify(res, qty)
+                self.bank.add_log(
+                    f"MANUALE: {res} {'+' if qty > 0 else ''}{qty} ({input('Motivo: ')})"
+                )
+                self.bank.save_state(self.guild)
+            except:
+                pass
+
+    def menu(self):
+        while True:
+            self.header()
+            print("\n1. ☀️  GIORNO SINGOLO")
+            print("2. ⏩ SIMULAZIONE")
+            print("3. ➕ Aggiungi Unità")
+            print("4. 🔢 Modifica Quantità")
+            print("5. 👤 Modifica Statistiche")
+            print("6. ✏️  Gestione Risorse")
+            print("7. 📜 Storico")
+            print("8. 🚪 Esci")
+
+            c = input("\nScelta: ")
+            if c == "1":
+                self.ask_location()
+
+                if self.bank.guild_control_lost:
+                    print("\n⛔ ATTENZIONE: La gilda è fuori controllo!")
+                    if input("Tenti il controllo? (s/n) ") == "s":
+                        self.attempt_regain_control()
+                        self.bank.day_counter += 1
+                        self.bank.save_state(self.guild)
+                else:
+                    self.process_event()
+                    self.guild.process_daily_effects()
+                    if not self.bank.guild_control_lost:
+                        self.generate_capital_single()
+                    else:
+                        self.bank.day_counter += 1
+                        self.bank.save_state(self.guild)
+                        input("Giorno perso per Ammutinamento...")
+
+            elif c == "2":
+                self.run_simulation()
+            elif c == "3":
+                self.add_unit_smart()
+            elif c == "4":
+                self.edit_units_menu()
+            elif c == "5":
+                self.edit_stats_menu()
+            elif c == "6":
+                self.manual_mod()
+            elif c == "7":
+                print("\n".join(self.bank.history[-30:]))
+                input("...")
+            elif c == "8":
+                break
 
 
 if __name__ == "__main__":
-    main()
+    app = GameEngine()
+    app.menu()
