@@ -7,16 +7,17 @@ import time
 from pathlib import Path
 
 # ============================================================
-# Percorsi "GitHub-friendly"
-# - Questo file è pensato in: src/guild_downtime/game_engine.py
-# - I salvataggi stanno in: <root>/data/saves/Cacciatori_di_Taglie.json
-#   (se vuoi usare un altro nome, cambia solo la riga SAVE_FILE)
+# Paths (repo-friendly)
+# - This file is expected at: src/guild_downtime/game_engine.py
+# - Saves are stored in: <repo_root>/data/saves/<guild_slug>.json
 # ============================================================
 
 BASE_DIR = Path(__file__).resolve().parents[2]
 SAVE_DIR = BASE_DIR / "data" / "saves"
 SAVE_DIR.mkdir(parents=True, exist_ok=True)
-SAVE_FILE = SAVE_DIR / "Cacciatori_di_Taglie.json"
+
+# Default save file if none is specified (legacy / single-guild usage)
+DEFAULT_SAVE_FILE = SAVE_DIR / "Cacciatori_di_Taglie.json"
 
 # ==========================================
 # DATABASE REGOLE (Fonte: Golarion Insider)
@@ -153,7 +154,7 @@ DEFAULT_GUILD_CONFIG = {
 }
 
 # ==========================================
-# CLASSI DI SUPPORTO
+# SUPPORT CLASSES
 # ==========================================
 
 
@@ -299,7 +300,7 @@ class Guild:
 
 
 class ResourceBank:
-    def __init__(self):
+    def __init__(self, save_file=None):
         self.resources = {
             "MO": 0.0,
             "Merci": 0,
@@ -320,6 +321,9 @@ class ResourceBank:
         self.history = []
         self.guild_control_lost = False
 
+        # Individual save file for this bank / guild
+        self.save_file = Path(save_file) if save_file is not None else DEFAULT_SAVE_FILE
+
     def modify(self, resource, amount, reason=""):
         """
         Gestisce l'aggiunta/rimozione di risorse e applica i Costi di Conseguimento (GP).
@@ -335,20 +339,17 @@ class ResourceBank:
 
             # Controllo Fondi
             if self.resources["MO"] >= total_cost:
-                # Ho i soldi
                 self.resources["MO"] = round(self.resources["MO"] - total_cost, 2)
                 cost_gp = total_cost
             else:
-                # Non ho abbastanza soldi: riduco il guadagno a ciò che posso permettermi
                 affordable_amount = int(self.resources["MO"] // unit_cost)
                 actual_cost = affordable_amount * unit_cost
                 self.resources["MO"] = round(self.resources["MO"] - actual_cost, 2)
 
-                # Aggiorno le variabili di ritorno
                 actual_amount = affordable_amount
                 cost_gp = actual_cost
 
-        # Applicazione modifica risorsa target
+        # Applica modifica
         if resource == "MO":
             new_val = self.resources[resource] + actual_amount
             self.resources[resource] = round(max(0.0, new_val), 2)
@@ -364,7 +365,7 @@ class ResourceBank:
         if len(self.history) > 200:
             self.history.pop(0)
 
-    def save_state(self, guild):
+    def save_state(self, guild: Guild):
         data = {
             "resources": self.resources,
             "character_stats": self.character_stats,
@@ -376,13 +377,13 @@ class ResourceBank:
             "guild_units": [u.to_dict() for u in guild.units],
             "active_effects": guild.active_effects,
         }
-        with SAVE_FILE.open("w", encoding="utf-8") as f:
+        with self.save_file.open("w", encoding="utf-8") as f:
             json.dump(data, f, indent=4, ensure_ascii=False)
 
     def load_state(self):
-        if not SAVE_FILE.exists():
+        if not self.save_file.exists():
             return None
-        with SAVE_FILE.open("r", encoding="utf-8") as f:
+        with self.save_file.open("r", encoding="utf-8") as f:
             return json.load(f)
 
 
@@ -568,16 +569,23 @@ def handle_mercenary_event(d100, engine, silent=False):
 
 
 # ==========================================
-# MOTORE DI GIOCO
+# GAME ENGINE
 # ==========================================
 
 
 class GameEngine:
-    def __init__(self):
-        self.bank = ResourceBank()
+    def __init__(self, save_file=None, guild_name=None):
+        """
+        save_file: path of the JSON used for this guild.
+        guild_name: name to use when creating a new guild (ignored if a save exists).
+        """
+        self.bank = ResourceBank(save_file=save_file)
         saved = self.bank.load_state()
+
         if saved:
-            self.guild = Guild(saved["guild_name"])
+            # Load existing guild
+            name = saved.get("guild_name", DEFAULT_GUILD_CONFIG["name"])
+            self.guild = Guild(name)
             self.bank.resources = saved["resources"]
             self.bank.character_stats = saved.get(
                 "character_stats", self.bank.character_stats
@@ -588,7 +596,7 @@ class GameEngine:
             self.bank.guild_control_lost = saved.get("guild_control_lost", False)
             self.guild.active_effects = saved.get("active_effects", [])
 
-            # Merge stats
+            # Merge stats (add new default keys if missing)
             saved_stats = saved.get("character_stats", {})
             for k, v in self.bank.character_stats.items():
                 if k not in saved_stats:
@@ -601,7 +609,9 @@ class GameEngine:
                     DowntimeUnit(u["name"], u["type"], u["bonuses"], qty)
                 )
         else:
-            self.guild = Guild(DEFAULT_GUILD_CONFIG["name"])
+            # Create new guild from default config
+            name = guild_name or DEFAULT_GUILD_CONFIG["name"]
+            self.guild = Guild(name)
             for t in DEFAULT_GUILD_CONFIG["teams"]:
                 qty = t.get("qty", 1)
                 self.guild.add_unit(
@@ -760,7 +770,7 @@ class GameEngine:
         events_happened = 0
         total_spent_gp = 0
 
-        for d in range(days):
+        for _ in range(days):
             if self.days_absent > 0 or is_leaving:
                 self.days_absent += 1
 
@@ -862,9 +872,7 @@ class GameEngine:
         choice = input("> ").lower()
 
         if choice == "t":
-            total, roll, log_d = DiceRoller.roll_die(
-                20, bonus, f"Generazione {res_type}"
-            )
+            total, roll, _ = DiceRoller.roll_die(20, bonus, f"Generazione {res_type}")
             log_chk = f"d20[{roll}]+{bonus}"
         else:
             total = 10 + bonus
@@ -965,8 +973,9 @@ class GameEngine:
             try:
                 qty = float(input("Quantità: "))
                 self.bank.modify(res, qty)
+                motivo = input("Motivo: ")
                 self.bank.add_log(
-                    f"MANUALE: {res} {'+' if qty > 0 else ''}{qty} ({input('Motivo: ')})"
+                    f"MANUALE: {res} {'+' if qty > 0 else ''}{qty} ({motivo})"
                 )
                 self.bank.save_state(self.guild)
             except:
