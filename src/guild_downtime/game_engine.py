@@ -669,7 +669,7 @@ class GameEngine:
                 self.days_absent = int(input("Da quanti giorni sei via? "))
                 if self.days_absent < 0:
                     self.days_absent = 0
-            except:
+            except (ValueError, EOFError):
                 self.days_absent = 0
 
     def attempt_regain_control(self, silent=False):
@@ -725,7 +725,7 @@ class GameEngine:
             days = int(input("Quanti giorni vuoi simulare? "))
             if days <= 0:
                 return
-        except:
+        except (ValueError, EOFError):
             return
 
         start_res = self.bank.resources.copy()
@@ -756,7 +756,7 @@ class GameEngine:
                 print(f"[{i}] {r}")
             try:
                 target_res = res_cycle[int(input("> ")) - 1]
-            except:
+            except (ValueError, IndexError, EOFError):
                 return
 
         print("\nMetodo Dadi:")
@@ -925,7 +925,7 @@ class GameEngine:
             )
             try:
                 qty = int(input("Quantità (1): ") or 1)
-            except:
+            except (ValueError, EOFError):
                 qty = 1
             self.guild.add_unit(DowntimeUnit(found, u_type, data, qty))
             self.bank.save_state(self.guild)
@@ -950,8 +950,8 @@ class GameEngine:
             else:
                 u.qty = nq
             self.bank.save_state(self.guild)
-        except:
-            pass
+        except (ValueError, IndexError, EOFError):
+            return
 
     def edit_stats_menu(self):
         self.header()
@@ -964,8 +964,8 @@ class GameEngine:
             k = keys[idx]
             self.bank.character_stats[k] = int(input(f"Nuovo valore per {k}: "))
             self.bank.save_state(self.guild)
-        except:
-            pass
+        except (ValueError, IndexError, EOFError):
+            return
 
     def manual_mod(self):
         res = input("\nRisorsa: ")
@@ -978,8 +978,8 @@ class GameEngine:
                     f"MANUALE: {res} {'+' if qty > 0 else ''}{qty} ({motivo})"
                 )
                 self.bank.save_state(self.guild)
-            except:
-                pass
+            except (ValueError, EOFError):
+                return
 
     def menu(self):
         while True:
