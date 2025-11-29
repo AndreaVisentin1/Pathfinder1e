@@ -253,11 +253,23 @@ class Unit:
 
     @staticmethod
     def from_dict(data):
+        """
+        Build a Unit from a dict.
+
+        Supports both:
+        - new format:  name, unit_type, bonuses, quantity
+        - old format:  name, type, bonuses, qty
+        """
+        name = data.get("name", "Unnamed unit")
+        unit_type = data.get("unit_type") or data.get("type") or "Unknown"
+        bonuses = data.get("bonuses", {})
+        quantity = data.get("quantity", data.get("qty", 1))
+
         return Unit(
-            name=data["name"],
-            unit_type=data["unit_type"],
-            bonuses=data["bonuses"],
-            quantity=data.get("quantity", 1),
+            name=name,
+            unit_type=unit_type,
+            bonuses=bonuses,
+            quantity=quantity,
         )
 
 
@@ -1212,13 +1224,25 @@ class GameEngine:
         saved = self.bank.load_state()
 
         if saved:
-            # Ricostruisci gilda da salvataggio
+            # Rebuild guild from save file
             name = saved.get("guild_name", DEFAULT_GUILD_CONFIG["name"])
             starting_resources = saved.get(
                 "resources", DEFAULT_GUILD_CONFIG["starting_resources"]
             )
             units_data = saved.get("guild_units", [])
-            active_effects = saved.get("active_effects", [])
+
+            # Backward-compat for active_effects:
+            # - new format: list[str]
+            # - old format: list[dict{name, bonus, days_left}]
+            raw_active_effects = saved.get("active_effects", [])
+            if raw_active_effects and isinstance(raw_active_effects[0], dict):
+                active_effects = [
+                    e.get("name")
+                    for e in raw_active_effects
+                    if isinstance(e, dict) and "name" in e
+                ]
+            else:
+                active_effects = raw_active_effects
             description = DEFAULT_GUILD_CONFIG["description"]
             self.guild = Guild(
                 name=name,
